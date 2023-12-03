@@ -3,12 +3,13 @@
 #include <Ethernet.h>
 #include <PubSubClient.h>
 #include <Adafruit_ADS1X15.h>
+#include <Adafruit_MCP23X17.h>
 
-#define RELAY_HEAT 30
-#define RELAY_COOL 31
-#define RELAY_FAN 32
-#define RELAY_WCHARGE 33
-#define RELAY_WDUMP 34
+#define RELAY_HEAT 0
+#define RELAY_COOL 1
+#define RELAY_FAN 2
+#define RELAY_WCHARGE 3
+#define RELAY_WDUMP 4
 
 #define DINETTE 0
 #define KITCHEN 1
@@ -16,11 +17,13 @@
 #define BED 3
 #define PORCH 4
 #define UTILITY 5
-#define ZONE_COUNT 5
+#define WATER_PUMP 6
+#define ZONE_COUNT 6
 #define RELAY_ON LOW
 #define RELAY_OFF HIGH
 
 DHTNEW mySensor(48);
+Adafruit_MCP23X17 mcp;
 Adafruit_ADS1115 ads;  /* Use this for the 16-bit version */
 // ads.setGain(GAIN_TWOTHIRDS);  // 2/3x gain +/- 6.144V  1 bit = 3mV      0.1875mV (default)
 // ads.setGain(GAIN_ONE);        // 1x gain   +/- 4.096V  1 bit = 2mV      0.125mV
@@ -53,14 +56,14 @@ bool stateCool = false;
 
 
 
-bool state[6] = {false,false,false,false,false,false};
-bool stateSW[6] = {false,false,false,false,false,false};
-bool stateAct[6] = {false,false,false,false,false,false};
-String setVal[6] = {"","","","","",""};
-int relayPins[6] = {35,36,37,38,39,40};
-int switchPins[6] = {24,25,26,27,28,29};
-String pubStr[6] = {"camper/switch/dinette","camper/switch/kitchen","camper/switch/bath","camper/switch/bed","camper/switch/porch","camper/switch/utility"};
-String subStr[6] = {"camper/switch/dinette/set","camper/switch/kitchen/set","camper/switch/bath/set","camper/switch/bed/set","camper/switch/porch/set","camper/switch/utility/set"};
+bool state[7] = {false,false,false,false,false,false,false};
+bool stateSW[7] = {false,false,false,false,false,false,false};
+bool stateAct[7] = {false,false,false,false,false,false,false};
+String setVal[7] = {"","","","","","",""};
+int relayPins[7] = {5,6,7,8,9,10,11};
+int switchPins[7] = {24,25,26,27,28,29,30};
+String pubStr[7] = {"camper/switch/dinette","camper/switch/kitchen","camper/switch/bath","camper/switch/bed","camper/switch/porch","camper/switch/utility","camper/switch/waterpump"};
+String subStr[7] = {"camper/switch/dinette/set","camper/switch/kitchen/set","camper/switch/bath/set","camper/switch/bed/set","camper/switch/porch/set","camper/switch/utility/set","camper/switch/waterpump/set"};
 String setDump = "";
 bool stateDump = false;
 bool stateCmdDump = false;
@@ -108,6 +111,7 @@ void callback(char* topic, byte* payload, unsigned int length)
 void setup()
 {
   ads.begin();
+  mcp.begin_I2C();
   client.setServer(server, 1883);
   client.setCallback(callback);
 
@@ -144,13 +148,13 @@ void setup()
 
   for (int i = RELAY_HEAT; i <= RELAY_WDUMP; i++)
   {
-    pinMode(i, OUTPUT);
-    digitalWrite(i,RELAY_OFF);
+    mcp.pinMode(i, OUTPUT);
+    mcp.digitalWrite(i,RELAY_OFF);
   }
   for (int i = 0; i <= ZONE_COUNT; i++)
   {
-    pinMode(relayPins[i], OUTPUT);
-    digitalWrite(relayPins[i],RELAY_OFF);
+    mcp.pinMode(relayPins[i], OUTPUT);
+    mcp.digitalWrite(relayPins[i],RELAY_OFF);
   }
   for (int i = 0; i <= ZONE_COUNT; i++)
   {
@@ -215,20 +219,22 @@ void loop()
       }
       if (state[i] == stateSW[i])
       {
-        digitalWrite(relayPins[i],RELAY_ON);
+        mcp.digitalWrite(relayPins[i],RELAY_ON);
         stateAct[i] = true;
       }
       else
       {
-        digitalWrite(relayPins[i],RELAY_OFF);
+        mcp.digitalWrite(relayPins[i],RELAY_OFF);
         stateAct[i] = false;
       }
     }
+    char tmpChar[40];
     for (int i=0; i<=ZONE_COUNT; i++) {
       pubStr[i].toCharArray(tmpChar, 40);
       client.publish(tmpChar,stateAct[i]? "ON":"OFF");
     }
-      
+    
+    // handle voltage sense for dump load
     float multiplier = 0.1875F; /* ADS1115  @ +/- 6.144V gain (16-bit results) */
     int16_t results = ads.readADC_Differential_0_1();
     float windMiliVolts = (results * multiplier);
@@ -237,8 +243,18 @@ void loop()
     char tmpMV[32];
     dtostrf((windMiliVolts/1000.00), 7, 2, tmpMV);
     client.publish("camper/windmv",tmpMV);
-
-    // Tamura L01Z200S05
+    
+    // handle switching of dump load
+    if (setDump == "ON" || stateCmdDump == true) {
+      mcp.digitalWrite(RELAY_WCHARGE,RELAY_OFF);
+      mcp.digitalWrite(RELAY_WDUMP,RELAY_ON);
+    } else if (setDump == "OFF" && stateCmdDump == false) {
+      mcp.digitalWrite(RELAY_WCHARGE,RELAY_ON);
+      mcp.digitalWrite(RELAY_WDUMP,RELAY_OFF);
+    }
+    client.publish("camper/switch/wdump",stateActDump? "ON":"OFF");
+    
+    // handle load current sense with a Tamura L01Z200S05
     int16_t refReading = ads.readADC_SingleEnded(2);
     float refVolts = ads.computeVolts(refReading);
     int16_t curReading = ads.readADC_SingleEnded(3);
@@ -248,16 +264,9 @@ void loop()
     dtostrf(amps, 7, 2, tmpAmps);
     client.publish("camper/loada",tmpAmps);
 
-    if (setDump == "ON" || stateCmdDump == true) {
-      digitalWrite(RELAY_WCHARGE,RELAY_OFF);
-      digitalWrite(RELAY_WDUMP,RELAY_ON);
-    } else if (setDump == "OFF" && stateCmdDump == false) {
-      digitalWrite(RELAY_WCHARGE,RELAY_ON);
-      digitalWrite(RELAY_WDUMP,RELAY_OFF);
-    }
 
-    client.publish("camper/switch/wdump",stateActDump? "ON":"OFF");
-    char tmpChar[40];
+    
+    // handle water levels
 
     /** \brief handle thermostat
       *
@@ -313,27 +322,27 @@ void loop()
     }
     if (stateHeating == true)
     {
-      digitalWrite(RELAY_HEAT, LOW);
+      mcp.digitalWrite(RELAY_HEAT, LOW);
     }
     else
     {
-      digitalWrite(RELAY_HEAT, HIGH);
+      mcp.digitalWrite(RELAY_HEAT, HIGH);
     }
     if (stateCooling == true && stateFan == false && stateCool == false)
     {
-      digitalWrite(RELAY_FAN, LOW);
+      mcp.digitalWrite(RELAY_FAN, LOW);
       stateFan = true;
     }
     else if (stateCooling == true && millis() - coolTimer >= 30000 && stateFan == true && stateCool == false)
     {
       stateCool = true;
       coolTimer = millis();
-      digitalWrite(RELAY_COOL, LOW);
+      mcp.digitalWrite(RELAY_COOL, LOW);
     }
     else if(stateCooling == false)
     {
-      digitalWrite(RELAY_COOL, HIGH);
-      digitalWrite(RELAY_FAN, HIGH);
+      mcp.digitalWrite(RELAY_COOL, HIGH);
+      mcp.digitalWrite(RELAY_FAN, HIGH);
       stateFan = false;
       stateCool = false;
     }
