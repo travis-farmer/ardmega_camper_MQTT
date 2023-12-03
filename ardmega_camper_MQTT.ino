@@ -11,13 +11,6 @@
 #define RELAY_WCHARGE 3
 #define RELAY_WDUMP 4
 
-#define DINETTE 0
-#define KITCHEN 1
-#define BATH 2
-#define BED 3
-#define PORCH 4
-#define UTILITY 5
-#define WATER_PUMP 6
 #define ZONE_COUNT 6
 #define RELAY_ON LOW
 #define RELAY_OFF HIGH
@@ -71,6 +64,10 @@ bool stateActDump = false;
 
 unsigned long coolTimer = 0UL;
 
+int barLedCount = 5;
+int barClearLeds[5] = {49,48,47,46,45};
+int barGreyLeds[5] = {44,43,42,41,40};
+int barBlackLeds[5] = {39,38,37,36,35};
 
 boolean reconnect()
 {
@@ -160,6 +157,19 @@ void setup()
   {
     pinMode(switchPins[i], INPUT_PULLUP);
   }
+  for (int i = 0; i <= barLedCount; i++)
+  {
+    pinMode(barClearLeds[i], OUTPUT);
+  }
+  for (int i = 0; i <= barLedCount; i++)
+  {
+    pinMode(barGreyLeds[i], OUTPUT);
+  }
+  for (int i = 0; i <= barLedCount; i++)
+  {
+    pinMode(barBlackLeds[i], OUTPUT);
+  }
+  
 }
 
 void loop()
@@ -264,9 +274,45 @@ void loop()
     dtostrf(amps, 7, 2, tmpAmps);
     client.publish("camper/loada",tmpAmps);
 
-
-    
     // handle water levels
+    int readClearWater = analogRead(0);
+    int readGreyWater = analogRead(1);
+    int readBlackWater = analogRead(2);
+    int mapClearWater = map(readClearWater,0,1023,0,100);
+    int mapGreyWater = map(readGreyWater,0,1023,0,100);
+    int mapBlackWater = map(readBlackWater,0,1023,0,100);
+    char water[30];
+    sprintf(water, "%d", mapClearWater);
+    client.publish("camper/sensor/clearwater",water);
+    sprintf(water, "%d", mapGreyWater);
+    client.publish("camper/sensor/greywater",water);
+    sprintf(water, "%d", mapBlackWater);
+    client.publish("camper/sensor/blackwater",water);
+    // send to LED bar graphs
+    int mapClearLeds = map(readClearWater,0,1023,0,barLedCount);
+    int mapGreyLeds = map(readGreyWater,0,1023,0,barLedCount);
+    int mapBlackLeds = map(readBlackWater,0,1023,0,barLedCount);
+    for (int thisLed = 0; thisLed < barLedCount; thisLed++) {
+      if (thisLed < mapClearLeds) {
+        digitalWrite(barClearLeds[thisLed], HIGH);
+      } else {
+        digitalWrite(barClearLeds[thisLed], LOW);
+      }
+    }
+    for (int thisLed = 0; thisLed < barLedCount; thisLed++) {
+      if (thisLed < mapGreyLeds) {
+        digitalWrite(barGreyLeds[thisLed], HIGH);
+      } else {
+        digitalWrite(barGreyLeds[thisLed], LOW);
+      }
+    }
+    for (int thisLed = 0; thisLed < barLedCount; thisLed++) {
+      if (thisLed < mapBlackLeds) {
+        digitalWrite(barBlackLeds[thisLed], HIGH);
+      } else {
+        digitalWrite(barBlackLeds[thisLed], LOW);
+      }
+    }
 
     /** \brief handle thermostat
       *
