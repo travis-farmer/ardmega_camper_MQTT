@@ -62,6 +62,10 @@ bool stateDump = false;
 bool stateCmdDump = false;
 bool stateActDump = false;
 
+int buttonState[7];
+int lastButtonState[7] = {HIGH,HIGH,HIGH,HIGH,HIGH,HIGH,HIGH};
+unsigned long lastDebounceTime[7] = {0UL,0UL,0UL,0UL,0UL,0UL,0UL};
+
 unsigned long coolTimer = 0UL;
 
 int barLedCount = 5;
@@ -219,14 +223,21 @@ void loop()
       {
         state[i] = false;
       }
-      if (digitalRead(switchPins[i]) == HIGH)
-      {
-        stateSW[i] = true;
+      int reading = digitalRead(switchPins[i]);
+      if (reading != lastButtonState[i]) {
+      // reset the debouncing timer
+      lastDebounceTime[i] = millis();
       }
-      else
-      {
-        stateSW[i] = false;
+
+      if ((millis() - lastDebounceTime[i]) > 3000) { // hold for 3 seconds, to toggle
+      if (reading != buttonState[i]) {
+        buttonState[i] = reading;
+        if (buttonState[i] == LOW) {
+          stateSW[i] = !stateSW[i];
+        }
       }
+      }
+      lastButtonState[i] = reading;
       if (state[i] == stateSW[i])
       {
         mcp.digitalWrite(relayPins[i],RELAY_ON);
