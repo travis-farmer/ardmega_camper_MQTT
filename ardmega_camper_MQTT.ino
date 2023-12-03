@@ -224,6 +224,10 @@ void loop()
         stateAct[i] = false;
       }
     }
+    for (int i=0; i<=ZONE_COUNT; i++) {
+      pubStr[i].toCharArray(tmpChar, 40);
+      client.publish(tmpChar,stateAct[i]? "ON":"OFF");
+    }
       
     float multiplier = 0.1875F; /* ADS1115  @ +/- 6.144V gain (16-bit results) */
     int16_t results = ads.readADC_Differential_0_1();
@@ -251,6 +255,9 @@ void loop()
       digitalWrite(RELAY_WCHARGE,RELAY_ON);
       digitalWrite(RELAY_WDUMP,RELAY_OFF);
     }
+
+    client.publish("camper/switch/wdump",stateActDump? "ON":"OFF");
+    char tmpChar[40];
 
     /** \brief handle thermostat
       *
@@ -355,11 +362,5 @@ void loop()
     client.publish("hvac/temperature/current",sz);
     dtostrf(humidityRH, 4, 2, sz);
     client.publish("hvac/humidity/current",sz);
-    client.publish("camper/switch/wdump",stateActDump? "ON":"OFF");
-    char tmpChar[40];
-    for (int i=0; i<=ZONE_COUNT; i++) {
-      pubStr[i].toCharArray(tmpChar, 40);
-      client.publish(tmpChar,stateAct[i]? "ON":"OFF");
-    }
   }
 }
