@@ -75,7 +75,7 @@ int barBlackLeds[5] = {39,38,37,36,35};
 
 boolean reconnect()
 {
-  if (client.connect("ArduinoCamper"))
+  if (client.connect("ArduinoCamper","homeassistant","tuwaich2iekeen5shooheLeiraKaugeXie4shohYi0feeB4Eixi6yeiguejairoh"))
   {
     client.subscribe("hvac/mode/set");
     client.subscribe("hvac/temperature/set");
