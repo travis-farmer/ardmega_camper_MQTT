@@ -130,20 +130,13 @@ void setup()
   client.setServer(server, 1883);
   client.setCallback(callback);
 #if defined(ETH)
-//Serial.println("Initialize Ethernet with DHCP:");
   if (Ethernet.begin(mac) == 0)
   {
-    //Serial.println("Failed to configure Ethernet using DHCP");
-    // Check for Ethernet hardware present
     if (Ethernet.hardwareStatus() == EthernetNoHardware)
     {
-        //Serial.println("Ethernet shield was not found.  Sorry, can't run without hardware. :(");
-        //errorProc(1);
     }
     if (Ethernet.linkStatus() == LinkOFF)
     {
-        //Serial.println("Ethernet cable is not connected.");
-        //errorProc(2);
     }
     // try to congifure using IP address instead of DHCP:
     Ethernet.begin(mac, ip, myDns);
@@ -154,31 +147,16 @@ void setup()
     //Serial.println(Ethernet.localIP());
   }
 #elif defined(WIFI)
-  // check for the presence of the shield:
   if (WiFi.status() == WL_NO_SHIELD) {
-    //Serial.println("WiFi shield not present");
-    // don't continue:
     while (true);
   }
-
-  // attempt to connect to WiFi network:
   while (status != WL_CONNECTED) {
-    //Serial.print("Attempting to connect to SSID: ");
-    //Serial.println(ssid);
-    // Connect to WPA/WPA2 network. Change this line if using open or WEP network:
     status = WiFi.begin(ssid, pass);
-
-    // wait 10 seconds for connection:
     delay(10000);
   }
 #endif
   delay(1500);
   lastReconnectAttempt = 0;
-
-  /*for (int i=30; i<= 46; i++) {
-    pinMode(i, OUTPUT);
-    digitalWrite(i, HIGH); // Relays are active with a LOW signal
-  }*/
 
   for (int i = RELAY_HEAT; i <= RELAY_WDUMP; i++)
   {
