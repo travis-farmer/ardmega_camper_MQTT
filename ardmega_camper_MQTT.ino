@@ -1,6 +1,16 @@
+//#define ETH
+#define WIFI
 #include <dhtnew.h>
 #include <SPI.h>
+#if defined(ETH)
 #include <Ethernet.h>
+#elif defined(WIFI)
+#include <WiFi101.h>
+#include "arduino_secrets.h" 
+///////please enter your sensitive data in the Secret tab/arduino_secrets.h
+char ssid[] = SECRET_SSID;        // your network SSID (name)
+char pass[] = SECRET_PASS;    // your network password (use for WPA, or use as key for WEP)
+#endif
 #include <PubSubClient.h>
 #include <Adafruit_ADS1X15.h>
 #include <Adafruit_MCP23X17.h>
@@ -31,9 +41,13 @@ IPAddress server(192, 168, 1, 84);
 IPAddress ip(192, 168, 0, 29);
 IPAddress myDns(192, 168, 0, 1);
 
+#if defined(ETH)
 EthernetClient eClient;
 PubSubClient client(eClient);
-
+#elif defined(WIFI)
+WiFiClient wClient;
+PubSubClient client(wClient);
+#endif
 long lastReconnectAttempt = 0;
 
 int setTemp = 0;
@@ -115,7 +129,7 @@ void setup()
   mcp.begin_I2C();
   client.setServer(server, 1883);
   client.setCallback(callback);
-
+#if defined(ETH)
 //Serial.println("Initialize Ethernet with DHCP:");
   if (Ethernet.begin(mac) == 0)
   {
@@ -139,6 +153,25 @@ void setup()
     //Serial.print("  DHCP assigned IP ");
     //Serial.println(Ethernet.localIP());
   }
+#elif defined(WIFI)
+  // check for the presence of the shield:
+  if (WiFi.status() == WL_NO_SHIELD) {
+    //Serial.println("WiFi shield not present");
+    // don't continue:
+    while (true);
+  }
+
+  // attempt to connect to WiFi network:
+  while (status != WL_CONNECTED) {
+    //Serial.print("Attempting to connect to SSID: ");
+    //Serial.println(ssid);
+    // Connect to WPA/WPA2 network. Change this line if using open or WEP network:
+    status = WiFi.begin(ssid, pass);
+
+    // wait 10 seconds for connection:
+    delay(10000);
+  }
+#endif
   delay(1500);
   lastReconnectAttempt = 0;
 
