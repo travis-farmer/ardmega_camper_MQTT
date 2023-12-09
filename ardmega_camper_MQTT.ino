@@ -8,8 +8,9 @@
 #include <WiFi101.h>
 #include "arduino_secrets.h" 
 ///////please enter your sensitive data in the Secret tab/arduino_secrets.h
-char ssid[] = SECRET_SSID;        // your network SSID (name)
-char pass[] = SECRET_PASS;    // your network password (use for WPA, or use as key for WEP)
+char ssid[] = WSSID;        // your network SSID (name)
+char pass[] = WPSWD;    // your network password (use for WPA, or use as key for WEP)
+int status = WL_IDLE_STATUS;
 #endif
 #include <PubSubClient.h>
 #include <Adafruit_ADS1X15.h>
@@ -267,13 +268,19 @@ void loop()
     }
     
     // handle voltage sense for dump load
-    float multiplier = 0.1875F; /* ADS1115  @ +/- 6.144V gain (16-bit results) */
-    int16_t results = ads.readADC_Differential_0_1();
-    float windMiliVolts = (results * multiplier);
-    if (windMiliVolts >= 35000 && stateCmdDump == false) stateCmdDump = true;
-    else if (windMiliVolts <= 14000 && stateCmdDump == true) stateCmdDump = false;
+    // 20k/1k vd
+    // ((Vin * Rlow) / (Rhi + Rlow)) = Vout
+    //
+
+    float operatingVoltage = analogRead(0); // analog A0 tied to 3.3v voltage reference. could use a better reference than the 3.3v
+    float rawVoltage = analogRead(1); // A1 tied to voltage sense through the 20K/1K voltage divider. 100Vdc max input!
+    operatingVoltage = 3.30 / operatingVoltage; // get multiplyer, if better reference, change 3.30 to actual reference volts.
+    rawVoltage = operatingVoltage * rawVoltage; // calc raw voltage from 3.3v reference.
+    float windCalcVolts = ((rawVoltage * 1000) / (20000 + 1000));
+    if (windCalcVolts >= 35.000 && stateCmdDump == false) stateCmdDump = true;
+    else if (windCalcVolts <= 14.000 && stateCmdDump == true) stateCmdDump = false;
     char tmpMV[32];
-    dtostrf((windMiliVolts/1000.00), 7, 2, tmpMV);
+    dtostrf(windCalcVolts, 7, 2, tmpMV);
     client.publish("camper/windmv",tmpMV);
     
     // handle switching of dump load
@@ -287,19 +294,19 @@ void loop()
     client.publish("camper/switch/wdump",stateActDump? "ON":"OFF");
     
     // handle load current sense with a Tamura L01Z200S05
-    int16_t refReading = ads.readADC_SingleEnded(2);
-    float refVolts = ads.computeVolts(refReading);
-    int16_t curReading = ads.readADC_SingleEnded(3);
-    float curVolts = ads.computeVolts(curReading);
-    float amps = map(curVolts,0.00,refVolts,-200.00,200.00);
+    float boperatingVoltage = ads.readADC_SingleEnded(0); // analog A0 tied to 3.3v voltage reference. could use a better reference than the 3.3v
+    float brawVoltage = ads.readADC_SingleEnded(1); // Tied to Load current sensor output.
+    boperatingVoltage = 3.30 / boperatingVoltage; // get multiplyer, if better reference, change 3.30 to actual reference volts.
+    brawVoltage = boperatingVoltage * brawVoltage; // calc raw voltage from 3.3v reference.
+    float amps = map(brawVoltage,0.00,5.00,-200.00,200.00);
     char tmpAmps[32];
     dtostrf(amps, 7, 2, tmpAmps);
     client.publish("camper/loada",tmpAmps);
 
     // handle water levels
-    int readClearWater = analogRead(0);
-    int readGreyWater = analogRead(1);
-    int readBlackWater = analogRead(2);
+    int readClearWater = analogRead(2);
+    int readGreyWater = analogRead(3);
+    int readBlackWater = analogRead(4);
     int mapClearWater = map(readClearWater,0,1023,0,100);
     int mapGreyWater = map(readGreyWater,0,1023,0,100);
     int mapBlackWater = map(readBlackWater,0,1023,0,100);
