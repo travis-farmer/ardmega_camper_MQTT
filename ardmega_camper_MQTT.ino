@@ -294,13 +294,13 @@ void loop()
     client.publish("camper/switch/wdump",stateActDump? "ON":"OFF");
     
     // handle load current sense with a Tamura L01Z200S05
-    float boperatingVoltage = ads.readADC_SingleEnded(0); // analog A0 tied to 3.3v voltage reference. could use a better reference than the 3.3v
-    float brawVoltage = ads.readADC_SingleEnded(1); // Tied to Load current sensor output.
-    boperatingVoltage = 3.30 / boperatingVoltage; // get multiplyer, if better reference, change 3.30 to actual reference volts.
-    brawVoltage = boperatingVoltage * brawVoltage; // calc raw voltage from 3.3v reference.
-    float amps = map(brawVoltage,0.00,5.00,-200.00,200.00);
+    float BoperatingVoltage = ads.readADC_SingleEnded(0); // analog A0 tied to 3.3v voltage reference. could use a better reference than the 3.3v
+    float BrawVoltage = ads.readADC_SingleEnded(1); // Tied to Load current sensor output.
+    BoperatingVoltage = 3.30 / BoperatingVoltage; // get multiplyer, if better reference, change 3.30 to actual reference volts.
+    BrawVoltage = BoperatingVoltage * BrawVoltage; // calc raw voltage from 3.3v reference.
+    float amps = map(BrawVoltage,2.50,5.00,0.00,200.00);
     char tmpAmps[32];
-    dtostrf(amps, 7, 2, tmpAmps);
+    dtostrf(amps, 7, 3, tmpAmps);
     client.publish("camper/loada",tmpAmps);
 
     // handle water levels
