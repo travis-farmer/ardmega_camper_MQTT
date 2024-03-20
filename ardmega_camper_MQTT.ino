@@ -13,28 +13,19 @@ char pass[] = WPSWD;    // your network password (use for WPA, or use as key for
 int status = WL_IDLE_STATUS;
 #endif
 #include <PubSubClient.h>
-#include <Adafruit_ADS1X15.h>
 #include <Adafruit_MCP23X17.h>
 
-#define RELAY_HEAT 0
-#define RELAY_COOL 1
-#define RELAY_FAN 2
-#define RELAY_WCHARGE 3
-#define RELAY_WDUMP 4
+#define RELAY_HEAT 49
+#define RELAY_COOL 48
+#define RELAY_FAN 47
 
-#define ZONE_COUNT 6
+
+#define ZONE_COUNT 2
 #define RELAY_ON LOW
 #define RELAY_OFF HIGH
 
-DHTNEW mySensor(48);
+DHTNEW mySensor(2);
 Adafruit_MCP23X17 mcp;
-Adafruit_ADS1115 ads;  /* Use this for the 16-bit version */
-// ads.setGain(GAIN_TWOTHIRDS);  // 2/3x gain +/- 6.144V  1 bit = 3mV      0.1875mV (default)
-// ads.setGain(GAIN_ONE);        // 1x gain   +/- 4.096V  1 bit = 2mV      0.125mV
-// ads.setGain(GAIN_TWO);        // 2x gain   +/- 2.048V  1 bit = 1mV      0.0625mV
-// ads.setGain(GAIN_FOUR);       // 4x gain   +/- 1.024V  1 bit = 0.5mV    0.03125mV
-// ads.setGain(GAIN_EIGHT);      // 8x gain   +/- 0.512V  1 bit = 0.25mV   0.015625mV
-// ads.setGain(GAIN_SIXTEEN);    // 16x gain  +/- 0.256V  1 bit = 0.125mV  0.0078125mV
 
 // Update these with values suitable for your hardware/network.
 byte mac[]    = {  0xDE, 0xED, 0xBA, 0xFE, 0xFE, 0xBE };
@@ -51,7 +42,8 @@ PubSubClient client(wClient);
 #endif
 long lastReconnectAttempt = 0;
 
-int setTemp = 0;
+int setLowTemp = 0;
+int setHighTemp = 0;
 String setMode = "";
 float tempF = 0.00;
 float humidityRH = 0.00;
@@ -64,37 +56,28 @@ bool stateCool = false;
 
 
 
-bool state[7] = {false,false,false,false,false,false,false};
-bool stateSW[7] = {false,false,false,false,false,false,false};
-bool stateAct[7] = {false,false,false,false,false,false,false};
-String setVal[7] = {"","","","","","",""};
-int relayPins[7] = {5,6,7,8,9,10,11};
-int switchPins[7] = {24,25,26,27,28,29,30};
-String pubStr[7] = {"camper/switch/dinette","camper/switch/kitchen","camper/switch/bath","camper/switch/bed","camper/switch/porch","camper/switch/utility","camper/switch/waterpump"};
-String subStr[7] = {"camper/switch/dinette/set","camper/switch/kitchen/set","camper/switch/bath/set","camper/switch/bed/set","camper/switch/porch/set","camper/switch/utility/set","camper/switch/waterpump/set"};
-String setDump = "";
-bool stateDump = false;
-bool stateCmdDump = false;
-bool stateActDump = false;
+bool state[8] = {false,false,false,false,false,false,false,false};
+bool stateAct[8] = {false,false,false,false,false,false,false,false};
+String setVal[8] = {"","","","","","","",""};
+int relayPins[8] = {44,43,42,41,40,39,38,37};
+int switchPins[8] = {24,25,26,27,28,29,30,31};
+String pubStr[8] = {"shop/switch/light","shop/switch/dust","shop/switch/compressor","","","","",""};
+String subStr[8] = {"shop/switch/light/set","shop/switch/dust/set","shop/switch/compressor/set","","","","",""};
 
-int buttonState[7];
-int lastButtonState[7] = {HIGH,HIGH,HIGH,HIGH,HIGH,HIGH,HIGH};
-unsigned long lastDebounceTime[7] = {0UL,0UL,0UL,0UL,0UL,0UL,0UL};
+int buttonState[8];
+int lastButtonState[8] = {HIGH,HIGH,HIGH,HIGH,HIGH,HIGH,HIGH,HIGH};
+unsigned long lastDebounceTime[8] = {0UL,0UL,0UL,0UL,0UL,0UL,0UL,0UL};
 
 unsigned long coolTimer = 0UL;
 
-int barLedCount = 5;
-int barClearLeds[5] = {49,48,47,46,45};
-int barGreyLeds[5] = {44,43,42,41,40};
-int barBlackLeds[5] = {39,38,37,36,35};
-
 boolean reconnect()
 {
-  if (client.connect("ArduinoCamper","homeassistant","tuwaich2iekeen5shooheLeiraKaugeXie4shohYi0feeB4Eixi6yeiguejairoh"))
+  if (client.connect("ArduinoShop", MQTT_USER, MQTT_PASS))
   {
-    client.subscribe("hvac/mode/set");
-    client.subscribe("hvac/temperature/set");
-    client.subscribe("camper/switch/wdump/set");
+    client.subscribe("equip/hvac/mode/set");
+    client.subscribe("equip/hvac/temperature/lowset");
+    client.subscribe("equip/hvac/temperature/highset");
+
     char tmpChar[40];
     for (int i=0; i<=ZONE_COUNT; i++) {
       subStr[i].toCharArray(tmpChar, 40);
@@ -114,9 +97,9 @@ void callback(char* topic, byte* payload, unsigned int length)
   }
   tmpStr[length] = 0x00; // terminate the char string with a null
 
-  if (tmpTopic == "hvac/mode/set") setMode = tmpStr;
-  else if (tmpTopic == "hvac/temperature/set") setTemp = atoi(tmpStr);
-  else if (tmpTopic == "camper/switch/wdump/set") setDump = tmpStr;
+  if (tmpTopic == "equip/hvac/mode/set") setMode = tmpStr;
+  else if (tmpTopic == "equip/hvac/temperature/lowset") setLowTemp = atoi(tmpStr);
+  else if (tmpTopic == "equip/hvac/temperature/highset") setHighTemp = atoi(tmpStr);
   else {
     for (int i=0; i<=ZONE_COUNT; i++) {
       if (tmpTopic == subStr[i]) setVal[i] = tmpStr;
@@ -126,7 +109,6 @@ void callback(char* topic, byte* payload, unsigned int length)
 
 void setup()
 {
-  ads.begin();
   mcp.begin_I2C();
   client.setServer(server, 1883);
   client.setCallback(callback);
@@ -159,31 +141,19 @@ void setup()
   delay(1500);
   lastReconnectAttempt = 0;
 
-  for (int i = RELAY_HEAT; i <= RELAY_WDUMP; i++)
+  for (int i = RELAY_HEAT; i <= RELAY_FAN; i++)
   {
-    mcp.pinMode(i, OUTPUT);
-    mcp.digitalWrite(i,RELAY_OFF);
+    pinMode(i, OUTPUT);
+    digitalWrite(i,RELAY_OFF);
   }
   for (int i = 0; i <= ZONE_COUNT; i++)
   {
-    mcp.pinMode(relayPins[i], OUTPUT);
-    mcp.digitalWrite(relayPins[i],RELAY_OFF);
+    pinMode(relayPins[i], OUTPUT);
+    digitalWrite(relayPins[i],RELAY_OFF);
   }
   for (int i = 0; i <= ZONE_COUNT; i++)
   {
-    pinMode(switchPins[i], INPUT_PULLUP);
-  }
-  for (int i = 0; i <= barLedCount; i++)
-  {
-    pinMode(barClearLeds[i], OUTPUT);
-  }
-  for (int i = 0; i <= barLedCount; i++)
-  {
-    pinMode(barGreyLeds[i], OUTPUT);
-  }
-  for (int i = 0; i <= barLedCount; i++)
-  {
-    pinMode(barBlackLeds[i], OUTPUT);
+    pinMode(switchPins[i], INPUT);
   }
   
 }
@@ -235,31 +205,16 @@ void loop()
       {
         state[i] = false;
       }
-      int reading = digitalRead(switchPins[i]);
-      if (reading != lastButtonState[i]) {
-      // reset the debouncing timer
-      lastDebounceTime[i] = millis();
-      }
-
-      if ((millis() - lastDebounceTime[i]) > 3000) { // hold for 3 seconds, to toggle
-      if (reading != buttonState[i]) {
-        buttonState[i] = reading;
-        if (buttonState[i] == LOW) {
-          stateSW[i] = !stateSW[i];
-        }
-      }
-      }
-      lastButtonState[i] = reading;
-      if (state[i] == stateSW[i])
+      
+      if (state[i] == true)
       {
-        mcp.digitalWrite(relayPins[i],RELAY_ON);
-        stateAct[i] = true;
+        digitalWrite(relayPins[i],RELAY_ON);
       }
       else
       {
-        mcp.digitalWrite(relayPins[i],RELAY_OFF);
-        stateAct[i] = false;
+        digitalWrite(relayPins[i],RELAY_OFF);
       }
+      stateAct[i] = digitalRead(switchPins[i]);
     }
     char tmpChar[40];
     for (int i=0; i<=ZONE_COUNT; i++) {
@@ -276,74 +231,21 @@ void loop()
     float rawVoltage = analogRead(1); // A1 tied to voltage sense through the 20K/1K voltage divider. 100Vdc max input!
     operatingVoltage = 3.30 / operatingVoltage; // get multiplyer, if better reference, change 3.30 to actual reference volts.
     rawVoltage = operatingVoltage * rawVoltage; // calc raw voltage from 3.3v reference.
-    float windCalcVolts = ((rawVoltage * 1000) / (20000 + 1000));
-    if (windCalcVolts >= 35.000 && stateCmdDump == false) stateCmdDump = true;
-    else if (windCalcVolts <= 14.000 && stateCmdDump == true) stateCmdDump = false;
-    char tmpMV[32];
-    dtostrf(windCalcVolts, 7, 2, tmpMV);
-    client.publish("camper/windmv",tmpMV);
-    
-    // handle switching of dump load
-    if (setDump == "ON" || stateCmdDump == true) {
-      mcp.digitalWrite(RELAY_WCHARGE,RELAY_OFF);
-      mcp.digitalWrite(RELAY_WDUMP,RELAY_ON);
-    } else if (setDump == "OFF" && stateCmdDump == false) {
-      mcp.digitalWrite(RELAY_WCHARGE,RELAY_ON);
-      mcp.digitalWrite(RELAY_WDUMP,RELAY_OFF);
-    }
-    client.publish("camper/switch/wdump",stateActDump? "ON":"OFF");
+    float equipCalcVolts = ((rawVoltage * 1000) / (20000 + 1000));
+
+    char tmpV[32];
+    dtostrf(equipCalcVolts, 7, 2, tmpV);
+    client.publish("equip/volts",tmpV);
     
     // handle load current sense with a Tamura L01Z200S05
-    float BoperatingVoltage = ads.readADC_SingleEnded(0); // analog A0 tied to 3.3v voltage reference. could use a better reference than the 3.3v
-    float BrawVoltage = ads.readADC_SingleEnded(1); // Tied to Load current sensor output.
-    BoperatingVoltage = 3.30 / BoperatingVoltage; // get multiplyer, if better reference, change 3.30 to actual reference volts.
-    BrawVoltage = BoperatingVoltage * BrawVoltage; // calc raw voltage from 3.3v reference.
-    float amps = map(BrawVoltage,2.50,5.00,0.00,200.00);
+    float BrawVoltage = analogRead(5); // Tied to Load current sensor output.
+    BrawVoltage = operatingVoltage * BrawVoltage; // calc raw voltage from 3.3v reference.
+    float amps = map(BrawVoltage,0.00,5.00,-200.00,200.00);
     char tmpAmps[32];
     dtostrf(amps, 7, 3, tmpAmps);
-    client.publish("camper/loada",tmpAmps);
+    client.publish("equip/amps",tmpAmps);
 
-    // handle water levels
-    int readClearWater = analogRead(2);
-    int readGreyWater = analogRead(3);
-    int readBlackWater = analogRead(4);
-    int mapClearWater = map(readClearWater,0,1023,0,100);
-    int mapGreyWater = map(readGreyWater,0,1023,0,100);
-    int mapBlackWater = map(readBlackWater,0,1023,0,100);
-    char water[30];
-    sprintf(water, "%d", mapClearWater);
-    client.publish("camper/sensor/clearwater",water);
-    sprintf(water, "%d", mapGreyWater);
-    client.publish("camper/sensor/greywater",water);
-    sprintf(water, "%d", mapBlackWater);
-    client.publish("camper/sensor/blackwater",water);
-    // send to LED bar graphs
-    int mapClearLeds = map(readClearWater,0,1023,0,barLedCount);
-    int mapGreyLeds = map(readGreyWater,0,1023,0,barLedCount);
-    int mapBlackLeds = map(readBlackWater,0,1023,0,barLedCount);
-    for (int thisLed = 0; thisLed < barLedCount; thisLed++) {
-      if (thisLed < mapClearLeds) {
-        digitalWrite(barClearLeds[thisLed], HIGH);
-      } else {
-        digitalWrite(barClearLeds[thisLed], LOW);
-      }
-    }
-    for (int thisLed = 0; thisLed < barLedCount; thisLed++) {
-      if (thisLed < mapGreyLeds) {
-        digitalWrite(barGreyLeds[thisLed], HIGH);
-      } else {
-        digitalWrite(barGreyLeds[thisLed], LOW);
-      }
-    }
-    for (int thisLed = 0; thisLed < barLedCount; thisLed++) {
-      if (thisLed < mapBlackLeds) {
-        digitalWrite(barBlackLeds[thisLed], HIGH);
-      } else {
-        digitalWrite(barBlackLeds[thisLed], LOW);
-      }
-    }
-
-    /** \brief handle thermostat
+    /** \brief handle Equipment thermostat
       *
       *
       */
@@ -355,11 +257,11 @@ void loop()
     else if (setMode == "heat")
     {
       stateCooling = false;
-      if (tempF >= setTemp)
+      if (tempF >= setLowTemp)
       {
         stateHeating = false;
       }
-      else if (tempF <= setTemp - thermostatHysteresis)
+      else if (tempF <= setLowTemp - thermostatHysteresis)
       {
         stateHeating = true;
       }
@@ -367,28 +269,28 @@ void loop()
     else if (setMode == "cool")
     {
       stateHeating = false;
-      if (tempF <= setTemp)
+      if (tempF <= setHighTemp)
       {
         stateCooling = false;
       }
-      else if (tempF >= setTemp + thermostatHysteresis)
+      else if (tempF >= setHighTemp + thermostatHysteresis)
       {
         stateCooling = true;
       }
     }
     else if (setMode == "auto")
     {
-      if (tempF >= setTemp + thermostatHysteresis && stateCooling == false)
+      if (tempF >= setLowTemp + thermostatHysteresis && stateCooling == false)
       {
         stateCooling = true;
         stateHeating = false;
       }
-      else if (tempF <= setTemp - thermostatHysteresis && stateHeating == false)
+      else if (tempF <= setHighTemp - thermostatHysteresis && stateHeating == false)
       {
         stateCooling = false;
         stateHeating = true;
       }
-      else if ((tempF >= setTemp && stateHeating == true) || (tempF <= setTemp && stateCooling == true))
+      else if ((tempF >= setLowTemp && stateHeating == true) || (tempF <= setHighTemp && stateCooling == true))
       {
         stateCooling = false;
         stateHeating = false;
@@ -441,10 +343,10 @@ void loop()
       strAction = "off";
     }
     strAction.toCharArray(sz, 32);
-    client.publish("hvac/action",sz);
+    client.publish("equip/hvac/action",sz);
     dtostrf(tempF, 4, 2, sz);
-    client.publish("hvac/temperature/current",sz);
+    client.publish("equip/hvac/temperature/current",sz);
     dtostrf(humidityRH, 4, 2, sz);
-    client.publish("hvac/humidity/current",sz);
+    client.publish("equip/hvac/humidity/current",sz);
   }
 }
