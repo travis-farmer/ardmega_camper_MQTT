@@ -16,15 +16,18 @@ int status = WL_IDLE_STATUS;
 #include <Adafruit_MCP23X17.h>
 
 #define RELAY_HEAT 49
-#define RELAY_COOL 48
-#define RELAY_FAN 47
-
+#define RELAY_FAN 48
+#define RELAY_HVAC_HEAT 47
+#define RELAY_HVAC_FAN 46
+#define RELAY_HVAC_COOL 45
 
 #define ZONE_COUNT 2
 #define RELAY_ON LOW
 #define RELAY_OFF HIGH
 
 DHTNEW mySensor(2);
+DHTNEW roomsensor(3);
+
 Adafruit_MCP23X17 mcp;
 
 // Update these with values suitable for your hardware/network.
@@ -44,11 +47,18 @@ long lastReconnectAttempt = 0;
 
 int setLowTemp = 0;
 int setHighTemp = 0;
+int setTemp = 0;
+String setEquipMode = "";
 String setMode = "";
+float tempEquipF = 0.00;
 float tempF = 0.00;
+float humidityEquipRH = 0.00;
 float humidityRH = 0.00;
 float thermostatHysteresis = 3.00;
 unsigned long lastTimer = 0UL;
+bool stateEquipHeating = false;
+bool stateEquipCooling = false;
+bool stateEquipCool = false;
 bool stateHeating = false;
 bool stateCooling = false;
 bool stateFan = false;
@@ -56,17 +66,18 @@ bool stateCool = false;
 
 
 
-bool state[8] = {false,false,false,false,false,false,false,false};
-bool stateAct[8] = {false,false,false,false,false,false,false,false};
-String setVal[8] = {"","","","","","","",""};
-int relayPins[8] = {44,43,42,41,40,39,38,37};
-int switchPins[8] = {24,25,26,27,28,29,30,31};
-String pubStr[8] = {"shop/switch/light","shop/switch/dust","shop/switch/compressor","","","","",""};
-String subStr[8] = {"shop/switch/light/set","shop/switch/dust/set","shop/switch/compressor/set","","","","",""};
+bool state[4] = {false,false,false,false};
+bool stateAct[4] = {false,false,false,false};
+String setVal[4] = {"","","",""};
+int relayPins[4] = {41,42,43,44};
+int relayPinsB[4] = {37,38,39,40};
+int switchPins[4] = {33,34,35,36};
+String pubStr[4] = {"shop/switch/light","shop/switch/dust","shop/switch/compressor","shop/switch/attic"};
+String subStr[4] = {"shop/switch/light/set","shop/switch/dust/set","shop/switch/compressor/set","shop/switch/attic/set"};
 
-int buttonState[8];
-int lastButtonState[8] = {HIGH,HIGH,HIGH,HIGH,HIGH,HIGH,HIGH,HIGH};
-unsigned long lastDebounceTime[8] = {0UL,0UL,0UL,0UL,0UL,0UL,0UL,0UL};
+int buttonState[4];
+int lastButtonState[4] = {HIGH,HIGH,HIGH,HIGH};
+unsigned long lastDebounceTime[4] = {0UL,0UL,0UL,0UL};
 
 unsigned long coolTimer = 0UL;
 
@@ -77,6 +88,8 @@ boolean reconnect()
     client.subscribe("equip/hvac/mode/set");
     client.subscribe("equip/hvac/temperature/lowset");
     client.subscribe("equip/hvac/temperature/highset");
+    client.subscribe("shop/hvac/mode/set");
+    client.subscribe("shop/hvac/temperature/set");
 
     char tmpChar[40];
     for (int i=0; i<=ZONE_COUNT; i++) {
@@ -97,7 +110,9 @@ void callback(char* topic, byte* payload, unsigned int length)
   }
   tmpStr[length] = 0x00; // terminate the char string with a null
 
-  if (tmpTopic == "equip/hvac/mode/set") setMode = tmpStr;
+  if (tmpTopic == "shop/hvac/mode/set") setMode = tmpStr;
+  else if (tmpTopic == "shop/hvac/temperature/lowset") setTemp = atoi(tmpStr);
+  else if (tmpTopic == "equip/hvac/mode/set") setEquipMode = tmpStr;
   else if (tmpTopic == "equip/hvac/temperature/lowset") setLowTemp = atoi(tmpStr);
   else if (tmpTopic == "equip/hvac/temperature/highset") setHighTemp = atoi(tmpStr);
   else {
@@ -141,7 +156,7 @@ void setup()
   delay(1500);
   lastReconnectAttempt = 0;
 
-  for (int i = RELAY_HEAT; i <= RELAY_FAN; i++)
+  for (int i = RELAY_HEAT; i <= RELAY_HVAC_COOL; i++)
   {
     pinMode(i, OUTPUT);
     digitalWrite(i,RELAY_OFF);
@@ -150,6 +165,8 @@ void setup()
   {
     pinMode(relayPins[i], OUTPUT);
     digitalWrite(relayPins[i],RELAY_OFF);
+    pinMode(relayPinsB[i],OUTPUT);
+    digitalWrite(relayPinsB[i],RELAY_ON);
   }
   for (int i = 0; i <= ZONE_COUNT; i++)
   {
@@ -187,10 +204,13 @@ void loop()
       *
       */
     lastTimer = millis();
-    int chk = mySensor.read();
-    humidityRH = mySensor.getHumidity();
-    tempF = ((mySensor.getTemperature() * 1.80) + 32.00);
 
+    int chk = mySensor.read();
+    humidityEquipRH = mySensor.getHumidity();
+    tempEquipF = ((mySensor.getTemperature() * 1.80) + 32.00);
+    int chkB = roomsensor.read();
+    humidityRH = roomsensor.getHumidity();
+    tempF = ((roomsensor.getTemperature() * 1.80) + 32.00);
 
     /** \brief handle switches
       *
@@ -209,10 +229,12 @@ void loop()
       if (state[i] == true)
       {
         digitalWrite(relayPins[i],RELAY_ON);
+        digitalWrite(relayPinsB[i],RELAY_OFF);
       }
       else
       {
         digitalWrite(relayPins[i],RELAY_OFF);
+        digitalWrite(relayPinsB[i],RELAY_ON);
       }
       stateAct[i] = digitalRead(switchPins[i]);
     }
@@ -222,7 +244,7 @@ void loop()
       client.publish(tmpChar,stateAct[i]? "ON":"OFF");
     }
     
-    // handle voltage sense for dump load
+    // handle voltage sense for Equipment
     // 20k/1k vd
     // ((Vin * Rlow) / (Rhi + Rlow)) = Vout
     //
@@ -249,79 +271,71 @@ void loop()
       *
       *
       */
-    if (setMode == "off")
+    if (setEquipMode == "off")
     {
-      stateHeating = false;
-      stateCooling = false;
+      stateEquipHeating = false;
+      stateEquipCooling = false;
     }
-    else if (setMode == "heat")
+    else if (setEquipMode == "heat")
     {
-      stateCooling = false;
-      if (tempF >= setLowTemp)
+      stateEquipCooling = false;
+      if (tempEquipF >= setLowTemp)
       {
-        stateHeating = false;
+        stateEquipHeating = false;
       }
-      else if (tempF <= setLowTemp - thermostatHysteresis)
+      else if (tempEquipF <= setLowTemp - thermostatHysteresis)
       {
-        stateHeating = true;
-      }
-    }
-    else if (setMode == "cool")
-    {
-      stateHeating = false;
-      if (tempF <= setHighTemp)
-      {
-        stateCooling = false;
-      }
-      else if (tempF >= setHighTemp + thermostatHysteresis)
-      {
-        stateCooling = true;
+        stateEquipHeating = true;
       }
     }
-    else if (setMode == "auto")
+    else if (setEquipMode == "cool")
     {
-      if (tempF >= setLowTemp + thermostatHysteresis && stateCooling == false)
+      stateEquipHeating = false;
+      if (tempEquipF <= setHighTemp)
       {
-        stateCooling = true;
-        stateHeating = false;
+        stateEquipCooling = false;
       }
-      else if (tempF <= setHighTemp - thermostatHysteresis && stateHeating == false)
+      else if (tempEquipF >= setHighTemp + thermostatHysteresis)
       {
-        stateCooling = false;
-        stateHeating = true;
+        stateEquipCooling = true;
       }
-      else if ((tempF >= setLowTemp && stateHeating == true) || (tempF <= setHighTemp && stateCooling == true))
+    }
+    else if (setEquipMode == "auto")
+    {
+      if (tempEquipF >= setLowTemp + thermostatHysteresis && stateEquipCooling == false)
       {
-        stateCooling = false;
-        stateHeating = false;
+        stateEquipCooling = true;
+        stateEquipHeating = false;
+      }
+      else if (tempEquipF <= setHighTemp - thermostatHysteresis && stateEquipHeating == false)
+      {
+        stateEquipCooling = false;
+        stateEquipHeating = true;
+      }
+      else if ((tempEquipF >= setLowTemp && stateEquipHeating == true) || (tempEquipF <= setHighTemp && stateEquipCooling == true))
+      {
+        stateEquipCooling = false;
+        stateEquipHeating = false;
       }
 
     }
-    if (stateHeating == true)
+    if (stateEquipHeating == true)
     {
-      mcp.digitalWrite(RELAY_HEAT, LOW);
+      digitalWrite(RELAY_HEAT, LOW);
     }
     else
     {
-      mcp.digitalWrite(RELAY_HEAT, HIGH);
+      digitalWrite(RELAY_HEAT, HIGH);
     }
-    if (stateCooling == true && stateFan == false && stateCool == false)
+    if (stateEquipCooling == true && stateEquipCool == false)
     {
-      mcp.digitalWrite(RELAY_FAN, LOW);
-      stateFan = true;
+      digitalWrite(RELAY_FAN, LOW);
+      stateEquipCool = true;
     }
-    else if (stateCooling == true && millis() - coolTimer >= 30000 && stateFan == true && stateCool == false)
+    else if(stateEquipCooling == false)
     {
-      stateCool = true;
-      coolTimer = millis();
-      mcp.digitalWrite(RELAY_COOL, LOW);
-    }
-    else if(stateCooling == false)
-    {
-      mcp.digitalWrite(RELAY_COOL, HIGH);
-      mcp.digitalWrite(RELAY_FAN, HIGH);
-      stateFan = false;
-      stateCool = false;
+      digitalWrite(RELAY_FAN, HIGH);
+      stateEquipCool = false;
     }
 
     /** \brief setup and send values and states
@@ -330,11 +344,11 @@ void loop()
       */
     char sz[32];
     String strAction = "";
-    if (stateHeating == true)
+    if (stateEquipHeating == true)
     {
       strAction = "heating";
     }
-    else if (stateCooling == true)
+    else if (stateEquipCooling == true)
     {
       strAction = "cooling";
     }
@@ -344,9 +358,113 @@ void loop()
     }
     strAction.toCharArray(sz, 32);
     client.publish("equip/hvac/action",sz);
-    dtostrf(tempF, 4, 2, sz);
+    dtostrf(tempEquipF, 4, 2, sz);
     client.publish("equip/hvac/temperature/current",sz);
-    dtostrf(humidityRH, 4, 2, sz);
+    dtostrf(humidityEquipRH, 4, 2, sz);
     client.publish("equip/hvac/humidity/current",sz);
   }
+
+/** \brief handle HVAC thermostat
+    *
+    *
+    */
+  if (setMode == "off")
+  {
+    stateHeating = false;
+    stateCooling = false;
+  }
+  else if (setMode == "heat")
+  {
+    stateCooling = false;
+    if (tempF >= setTemp)
+    {
+      stateHeating = false;
+    }
+    else if (tempF <= setTemp - thermostatHysteresis)
+    {
+      stateHeating = true;
+    }
+  }
+  else if (setMode == "cool")
+  {
+    stateHeating = false;
+    if (tempF <= setTemp)
+    {
+      stateCooling = false;
+    }
+    else if (tempF >= setTemp + thermostatHysteresis)
+    {
+      stateCooling = true;
+    }
+  }
+  else if (setMode == "auto")
+  {
+    if (tempF >= setTemp + thermostatHysteresis && stateCooling == false)
+    {
+      stateCooling = true;
+      stateHeating = false;
+    }
+    else if (tempF <= setTemp - thermostatHysteresis && stateHeating == false)
+    {
+      stateCooling = false;
+      stateHeating = true;
+    }
+    else if ((tempF >= setTemp && stateHeating == true) || (tempF <= setTemp && stateCooling == true))
+    {
+      stateCooling = false;
+      stateHeating = false;
+    }
+
+  }
+  if (stateHeating == true)
+  {
+    digitalWrite(RELAY_HVAC_HEAT, LOW);
+  }
+  else
+  {
+    digitalWrite(RELAY_HVAC_HEAT, HIGH);
+  }
+  if (stateCooling == true && stateFan == false && stateCool == false)
+  {
+    digitalWrite(RELAY_HVAC_FAN, LOW);
+    stateFan = true;
+  }
+  else if (stateCooling == true && millis() - coolTimer >= 30000 && stateFan == true && stateCool == false)
+  {
+    stateCool = true;
+    coolTimer = millis();
+    digitalWrite(RELAY_HVAC_COOL, LOW);
+  }
+  else if(stateCooling == false)
+  {
+    digitalWrite(RELAY_HVAC_COOL, HIGH);
+    digitalWrite(RELAY_HVAC_FAN, HIGH);
+    stateFan = false;
+    stateCool = false;
+  }
+
+  /** \brief setup and send values and states
+    *
+    *
+    */
+  char sz[32];
+  String strActionB = "";
+  if (stateHeating == true)
+  {
+    strActionB = "heating";
+  }
+  else if (stateCooling == true)
+  {
+    strActionB = "cooling";
+  }
+  else
+  {
+    strActionB = "off";
+  }
+  strActionB.toCharArray(sz, 32);
+  client.publish("shop/hvac/action",sz);
+  dtostrf(tempF, 4, 2, sz);
+  client.publish("shop/hvac/temperature/current",sz);
+  dtostrf(humidityRH, 4, 2, sz);
+  client.publish("shop/hvac/humidity/current",sz);
 }
