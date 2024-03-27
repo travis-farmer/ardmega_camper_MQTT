@@ -21,7 +21,7 @@ int status = WL_IDLE_STATUS;
 #define RELAY_HVAC_FAN 46
 #define RELAY_HVAC_COOL 45
 
-#define ZONE_COUNT 2
+#define ZONE_COUNT 3
 #define RELAY_ON LOW
 #define RELAY_OFF HIGH
 
@@ -32,7 +32,7 @@ Adafruit_MCP23X17 mcp;
 
 // Update these with values suitable for your hardware/network.
 byte mac[]    = {  0xDE, 0xED, 0xBA, 0xFE, 0xFE, 0xBE };
-IPAddress server(192, 168, 1, 84);
+IPAddress server(192, 168, 1, 100);
 IPAddress ip(192, 168, 0, 29);
 IPAddress myDns(192, 168, 0, 1);
 
@@ -83,7 +83,7 @@ unsigned long coolTimer = 0UL;
 
 boolean reconnect()
 {
-  if (client.connect("ArduinoShop", MQTT_USER, MQTT_PASS))
+  if (client.connect("ArduinoShopMQTT"))
   {
     client.subscribe("equip/hvac/mode/set");
     client.subscribe("equip/hvac/temperature/lowset");
@@ -197,7 +197,7 @@ void loop()
       client.loop();
     }
 
-  if (millis() - lastTimer >= 500)
+  if (millis() - lastTimer >= 1000)
   {
     /** \brief setup current values
       *
