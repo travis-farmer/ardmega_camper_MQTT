@@ -8,14 +8,14 @@ char pass[] = WPSWD;    // your network password (use for WPA, or use as key for
 int status = WL_IDLE_STATUS;
 #include <PubSubClient.h>
 #include <Adafruit_MCP23X17.h>
+#include <Adafruit_ADS1X15.h>
 
-#define RELAY_HEAT 49
-#define RELAY_FAN 48
-#define RELAY_HVAC_HEAT 47
-#define RELAY_HVAC_FAN 46
-#define RELAY_HVAC_COOL 45
+#define RELAY_HEAT 11
+#define RELAY_FAN 12
+#define RELAY_HVAC_HEAT 13
+#define RELAY_HVAC_FAN 14
+#define RELAY_HVAC_COOL 15
 
-#define ZONE_COUNT 3
 #define RELAY_ON LOW
 #define RELAY_OFF HIGH
 
@@ -23,6 +23,15 @@ DHTNEW mySensor(2);
 DHTNEW roomsensor(3);
 
 Adafruit_MCP23X17 mcp;
+Adafruit_MCP23X17 mcpB;
+
+Adafruit_ADS1115 ads1115;	// Construct an ads1115 
+//ads1115.setGain(GAIN_TWOTHIRDS);  // 2/3x gain +/- 6.144V  1 bit = 3mV (default)
+// ads1115.setGain(GAIN_ONE);     // 1x gain   +/- 4.096V  1 bit = 2mV
+// ads1115.setGain(GAIN_TWO);     // 2x gain   +/- 2.048V  1 bit = 1mV
+// ads1115.setGain(GAIN_FOUR);    // 4x gain   +/- 1.024V  1 bit = 0.5mV
+// ads1115.setGain(GAIN_EIGHT);   // 8x gain   +/- 0.512V  1 bit = 0.25mV
+// ads1115.setGain(GAIN_SIXTEEN); // 16x gain  +/- 0.256V  1 bit = 0.125mV
 
 // Update these with values suitable for your hardware/network.
 byte mac[]    = {  0xDE, 0xED, 0xBA, 0xFE, 0xFE, 0xBE };
@@ -55,18 +64,13 @@ bool stateCool = false;
 
 
 
-bool state[4] = {false,false,false,false};
-bool stateAct[4] = {false,false,false,false};
-String setVal[4] = {"","","",""};
-int relayPins[4] = {41,42,43,44};
-int relayPinsB[4] = {37,38,39,40};
-int switchPins[4] = {33,34,35,36};
-String pubStr[4] = {"shop/switch/light","shop/switch/dust","shop/switch/compressor","shop/switch/attic"};
-String subStr[4] = {"shop/switch/light/set","shop/switch/dust/set","shop/switch/compressor/set","shop/switch/attic/set"};
-
-int buttonState[4];
-int lastButtonState[4] = {HIGH,HIGH,HIGH,HIGH};
-unsigned long lastDebounceTime[4] = {0UL,0UL,0UL,0UL};
+bool state[11] = {false,false,false,false,false,false,false,false,false,false,false};
+bool stateAct[11] = {false,false,false,false,false,false,false,false,false,false,false};
+String setVal[11] = {"","","","","","","","","","",""};
+int relayPins[11] = {0,1,2,3,4,5,6,7,8,9,10};
+int switchPins[11] = {0,1,2,3,4,5,6,7,8,9,10};
+String pubStr[11] = {"shop/switch/light","shop/switch/dust","shop/switch/compressor","shop/switch/attic","","","","","","",""};
+String subStr[11] = {"shop/switch/light/set","shop/switch/dust/set","shop/switch/compressor/set","shop/switch/attic/set","","","","","","",""};
 
 unsigned long coolTimer = 0UL;
 
@@ -81,9 +85,11 @@ boolean reconnect()
     client.subscribe("shop/hvac/temperature/set");
 
     char tmpChar[40];
-    for (int i=0; i<=ZONE_COUNT; i++) {
-      subStr[i].toCharArray(tmpChar, 40);
-      client.subscribe(tmpChar);
+    for (int i=0; i<=11; i++) {
+      if (subStr[i] != "") {
+        subStr[i].toCharArray(tmpChar, 40);
+        client.subscribe(tmpChar);
+      }
     }
   }
   return client.connected();
@@ -105,15 +111,16 @@ void callback(char* topic, byte* payload, unsigned int length)
   else if (tmpTopic == "equip/hvac/temperature/lowset") setLowTemp = atoi(tmpStr);
   else if (tmpTopic == "equip/hvac/temperature/highset") setHighTemp = atoi(tmpStr);
   else {
-    for (int i=0; i<=ZONE_COUNT; i++) {
-      if (tmpTopic == subStr[i]) setVal[i] = tmpStr;
+    for (int i=0; i<=11; i++) {
+      if (tmpTopic == subStr[i] && subStr[i] != "") setVal[i] = tmpStr;
     }
   }
 }
 
 void setup()
 {
-  mcp.begin_I2C();
+  mcp.begin_I2C(0x27);
+  ads1115.begin(0x49);  // Initialize ads1115 at address 0x49
   client.setServer(server, 1883);
   client.setCallback(callback);
   if (WiFi.status() == WL_NO_SHIELD) {
@@ -127,21 +134,14 @@ void setup()
   delay(1500);
   lastReconnectAttempt = 0;
 
-  for (int i = RELAY_HEAT; i <= RELAY_HVAC_COOL; i++)
+  for (int i = 0; i <= 15; i++)
   {
-    pinMode(i, OUTPUT);
-    digitalWrite(i,RELAY_OFF);
+    mcp.pinMode(i, OUTPUT);
+    mcp.digitalWrite(i,RELAY_OFF);
   }
-  for (int i = 0; i <= ZONE_COUNT; i++)
+  for (int i = 0; i <= 11; i++)
   {
-    pinMode(relayPins[i], OUTPUT);
-    digitalWrite(relayPins[i],RELAY_OFF);
-    pinMode(relayPinsB[i],OUTPUT);
-    digitalWrite(relayPinsB[i],RELAY_ON);
-  }
-  for (int i = 0; i <= ZONE_COUNT; i++)
-  {
-    pinMode(switchPins[i], INPUT);
+    mcpB.pinMode(switchPins[i], INPUT);
   }
   
 }
@@ -187,7 +187,7 @@ void loop()
       *
       *
       */
-    for (int i=0; i<=ZONE_COUNT; i++) {
+    for (int i=0; i<=11; i++) {
       if (setVal[i] == "ON")
       {
         state[i] = true;
@@ -199,20 +199,20 @@ void loop()
       
       if (state[i] == true)
       {
-        digitalWrite(relayPins[i],RELAY_ON);
-        digitalWrite(relayPinsB[i],RELAY_OFF);
+        mcp.digitalWrite(relayPins[i],RELAY_ON);
       }
       else
       {
-        digitalWrite(relayPins[i],RELAY_OFF);
-        digitalWrite(relayPinsB[i],RELAY_ON);
+        mcp.digitalWrite(relayPins[i],RELAY_OFF);
       }
-      stateAct[i] = digitalRead(switchPins[i]);
+      stateAct[i] = mcpB.digitalRead(switchPins[i]);
     }
     char tmpChar[40];
-    for (int i=0; i<=ZONE_COUNT; i++) {
-      pubStr[i].toCharArray(tmpChar, 40);
-      client.publish(tmpChar,stateAct[i]? "ON":"OFF");
+    for (int i=0; i<=11; i++) {
+      if (pubStr[i] != "") {
+        pubStr[i].toCharArray(tmpChar, 40);
+        client.publish(tmpChar,stateAct[i]? "ON":"OFF");
+      }
     }
     
     // handle voltage sense for Equipment
@@ -220,9 +220,9 @@ void loop()
     // ((Vin * Rlow) / (Rhi + Rlow)) = Vout
     //
 
-    float operatingVoltage = analogRead(0); // analog A0 tied to 3.3v voltage reference. could use a better reference than the 3.3v
-    float rawVoltage = analogRead(1); // A1 tied to voltage sense through the 20K/1K voltage divider. 100Vdc max input!
-    operatingVoltage = 3.30 / operatingVoltage; // get multiplyer, if better reference, change 3.30 to actual reference volts.
+    float operatingVoltage = ads1115.readADC_SingleEnded(0); // analog A0 tied to 3.3v voltage reference. could use a better reference than the 3.3v
+    float rawVoltage = ads1115.readADC_SingleEnded(1); // A1 tied to voltage sense through the 20K/1K voltage divider. 100Vdc max input!
+    operatingVoltage = 2.048 / operatingVoltage; // get multiplyer, if better reference, change 3.30 to actual reference volts.
     rawVoltage = operatingVoltage * rawVoltage; // calc raw voltage from 3.3v reference.
     float equipCalcVolts = ((rawVoltage * 1000) / (20000 + 1000));
 
@@ -231,7 +231,7 @@ void loop()
     client.publish("equip/volts",tmpV);
     
     // handle load current sense with a Tamura L01Z200S05
-    float BrawVoltage = analogRead(2); // Tied to Load current sensor output.
+    float BrawVoltage = ads1115.readADC_SingleEnded(2); // Tied to Load current sensor output.
     BrawVoltage = operatingVoltage * BrawVoltage; // calc raw voltage from 3.3v reference.
     float ampsA = map(BrawVoltage,0.00,3.30,-200.00,200.00);
     char tmpAmps[32];
@@ -241,7 +241,7 @@ void loop()
     sprintf(tmpWatts, "%6.2f", (equipCalcVolts * ampsA));
     client.publish("equip/loadwatts",tmpWatts);
 
-    float CrawVoltage = analogRead(3); // Tied to Battery current sensor output.
+    float CrawVoltage = ads1115.readADC_SingleEnded(3); // Tied to Battery current sensor output.
     CrawVoltage = operatingVoltage * CrawVoltage; // calc raw voltage from 3.3v reference.
     float ampsB = map(CrawVoltage,0.00,3.30,-200.00,200.00);
     char tmpAmpsB[32];
@@ -305,20 +305,20 @@ void loop()
     }
     if (stateEquipHeating == true)
     {
-      digitalWrite(RELAY_HEAT, LOW);
+      mcp.digitalWrite(RELAY_HEAT, LOW);
     }
     else
     {
-      digitalWrite(RELAY_HEAT, HIGH);
+      mcp.digitalWrite(RELAY_HEAT, HIGH);
     }
     if (stateEquipCooling == true && stateEquipCool == false)
     {
-      digitalWrite(RELAY_FAN, LOW);
+      mcp.digitalWrite(RELAY_FAN, LOW);
       stateEquipCool = true;
     }
     else if(stateEquipCooling == false)
     {
-      digitalWrite(RELAY_FAN, HIGH);
+      mcp.digitalWrite(RELAY_FAN, HIGH);
       stateEquipCool = false;
     }
 
@@ -402,27 +402,27 @@ void loop()
   }
   if (stateHeating == true)
   {
-    digitalWrite(RELAY_HVAC_HEAT, LOW);
+    mcp.digitalWrite(RELAY_HVAC_HEAT, LOW);
   }
   else
   {
-    digitalWrite(RELAY_HVAC_HEAT, HIGH);
+    mcp.digitalWrite(RELAY_HVAC_HEAT, HIGH);
   }
   if (stateCooling == true && stateFan == false && stateCool == false)
   {
-    digitalWrite(RELAY_HVAC_FAN, LOW);
+    mcp.digitalWrite(RELAY_HVAC_FAN, LOW);
     stateFan = true;
   }
   else if (stateCooling == true && millis() - coolTimer >= 30000 && stateFan == true && stateCool == false)
   {
     stateCool = true;
     coolTimer = millis();
-    digitalWrite(RELAY_HVAC_COOL, LOW);
+    mcp.digitalWrite(RELAY_HVAC_COOL, LOW);
   }
   else if(stateCooling == false)
   {
-    digitalWrite(RELAY_HVAC_COOL, HIGH);
-    digitalWrite(RELAY_HVAC_FAN, HIGH);
+    mcp.digitalWrite(RELAY_HVAC_COOL, HIGH);
+    mcp.digitalWrite(RELAY_HVAC_FAN, HIGH);
     stateFan = false;
     stateCool = false;
   }
