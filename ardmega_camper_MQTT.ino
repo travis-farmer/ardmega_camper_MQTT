@@ -1,17 +1,11 @@
-//#define ETH
-#define WIFI
 #include <dhtnew.h>
 #include <SPI.h>
-#if defined(ETH)
-#include <Ethernet.h>
-#elif defined(WIFI)
-#include <WiFi101.h>
+#include <WiFi.h>
 #include "arduino_secrets.h" 
 ///////please enter your sensitive data in the Secret tab/arduino_secrets.h
 char ssid[] = WSSID;        // your network SSID (name)
 char pass[] = WPSWD;    // your network password (use for WPA, or use as key for WEP)
 int status = WL_IDLE_STATUS;
-#endif
 #include <PubSubClient.h>
 #include <Adafruit_MCP23X17.h>
 
@@ -36,13 +30,8 @@ IPAddress server(192, 168, 1, 100);
 IPAddress ip(192, 168, 0, 29);
 IPAddress myDns(192, 168, 0, 1);
 
-#if defined(ETH)
-EthernetClient eClient;
-PubSubClient client(eClient);
-#elif defined(WIFI)
 WiFiClient wClient;
 PubSubClient client(wClient);
-#endif
 long lastReconnectAttempt = 0;
 
 int setLowTemp = 0;
@@ -127,24 +116,6 @@ void setup()
   mcp.begin_I2C();
   client.setServer(server, 1883);
   client.setCallback(callback);
-#if defined(ETH)
-  if (Ethernet.begin(mac) == 0)
-  {
-    if (Ethernet.hardwareStatus() == EthernetNoHardware)
-    {
-    }
-    if (Ethernet.linkStatus() == LinkOFF)
-    {
-    }
-    // try to congifure using IP address instead of DHCP:
-    Ethernet.begin(mac, ip, myDns);
-  }
-  else
-  {
-    //Serial.print("  DHCP assigned IP ");
-    //Serial.println(Ethernet.localIP());
-  }
-#elif defined(WIFI)
   if (WiFi.status() == WL_NO_SHIELD) {
     while (true);
   }
@@ -152,7 +123,7 @@ void setup()
     status = WiFi.begin(ssid, pass);
     delay(10000);
   }
-#endif
+
   delay(1500);
   lastReconnectAttempt = 0;
 
@@ -197,7 +168,7 @@ void loop()
       client.loop();
     }
 
-  if (millis() - lastTimer >= 1000)
+  if (millis() - lastTimer >= 2000)
   {
     /** \brief setup current values
       *
@@ -256,17 +227,30 @@ void loop()
     float equipCalcVolts = ((rawVoltage * 1000) / (20000 + 1000));
 
     char tmpV[32];
-    dtostrf(equipCalcVolts, 7, 2, tmpV);
+    sprintf(tmpV, "%6.2f", equipCalcVolts);
     client.publish("equip/volts",tmpV);
     
     // handle load current sense with a Tamura L01Z200S05
-    float BrawVoltage = analogRead(5); // Tied to Load current sensor output.
+    float BrawVoltage = analogRead(2); // Tied to Load current sensor output.
     BrawVoltage = operatingVoltage * BrawVoltage; // calc raw voltage from 3.3v reference.
-    float amps = map(BrawVoltage,0.00,5.00,-200.00,200.00);
+    float ampsA = map(BrawVoltage,0.00,3.30,-200.00,200.00);
     char tmpAmps[32];
-    dtostrf(amps, 7, 3, tmpAmps);
-    client.publish("equip/amps",tmpAmps);
+    sprintf(tmpAmps, "%6.2f", ampsA);
+    client.publish("equip/loadamps",tmpAmps);
+    char tmpWatts[32];
+    sprintf(tmpWatts, "%6.2f", (equipCalcVolts * ampsA));
+    client.publish("equip/loadwatts",tmpWatts);
 
+    float CrawVoltage = analogRead(3); // Tied to Battery current sensor output.
+    CrawVoltage = operatingVoltage * CrawVoltage; // calc raw voltage from 3.3v reference.
+    float ampsB = map(CrawVoltage,0.00,3.30,-200.00,200.00);
+    char tmpAmpsB[32];
+    sprintf(tmpAmpsB, "%6.2f", ampsB);
+    client.publish("equip/battamps",tmpAmpsB);
+    char tmpWattsB[32];
+    sprintf(tmpWattsB, "%6.2f", (equipCalcVolts * ampsB));
+    client.publish("equip/battwatts",tmpWattsB);
+    
     /** \brief handle Equipment thermostat
       *
       *
@@ -358,9 +342,9 @@ void loop()
     }
     strAction.toCharArray(sz, 32);
     client.publish("equip/hvac/action",sz);
-    dtostrf(tempEquipF, 4, 2, sz);
+    sprintf(sz, "%6.2f", tempEquipF);
     client.publish("equip/hvac/temperature/current",sz);
-    dtostrf(humidityEquipRH, 4, 2, sz);
+    sprintf(sz, "%6.2f", humidityEquipRH);
     client.publish("equip/hvac/humidity/current",sz);
   }
 
@@ -463,8 +447,8 @@ void loop()
   }
   strActionB.toCharArray(sz, 32);
   client.publish("shop/hvac/action",sz);
-  dtostrf(tempF, 4, 2, sz);
+  sprintf(sz, "%6.2f", tempF);
   client.publish("shop/hvac/temperature/current",sz);
-  dtostrf(humidityRH, 4, 2, sz);
+  sprintf(sz, "%6.2f", humidityRH);
   client.publish("shop/hvac/humidity/current",sz);
 }
