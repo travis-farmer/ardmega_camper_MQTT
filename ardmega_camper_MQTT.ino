@@ -1,3 +1,5 @@
+#define TESTMODE
+
 #include <dhtnew.h>
 #include <SPI.h>
 #include <WiFi.h>
@@ -10,11 +12,11 @@ int status = WL_IDLE_STATUS;
 #include <Adafruit_MCP23X17.h>
 #include <Adafruit_ADS1X15.h>
 
-#define RELAY_HEAT 11
-#define RELAY_FAN 12
-#define RELAY_HVAC_HEAT 13
-#define RELAY_HVAC_FAN 14
-#define RELAY_HVAC_COOL 15
+#define RELAY_HEAT 11 //4
+#define RELAY_FAN 12 //5
+#define RELAY_HVAC_HEAT 13 //6
+#define RELAY_HVAC_FAN 14 //7
+#define RELAY_HVAC_COOL 15 //8
 
 #define RELAY_ON HIGH
 #define RELAY_OFF LOW
@@ -23,7 +25,6 @@ DHTNEW mySensor(2);
 DHTNEW roomsensor(3);
 
 Adafruit_MCP23X17 mcp;
-Adafruit_MCP23X17 mcpB;
 
 Adafruit_ADS1115 ads1115;	// Construct an ads1115 
 //ads1115.setGain(GAIN_TWOTHIRDS);  // 2/3x gain +/- 6.144V  1 bit = 3mV (default)
@@ -67,7 +68,7 @@ bool stateCool = false;
 bool state[11] = {false,false,false,false,false,false,false,false,false,false,false};
 bool stateAct[11] = {false,false,false,false,false,false,false,false,false,false,false};
 String setVal[11] = {"OFF","OFF","OFF","OFF","OFF","OFF","OFF","OFF","OFF","OFF","OFF"};
-int relayPins[11] = {0,1,2,3,4,5,6,7,8,9,10};
+int relayPins[11] = {0,1,2,3,4,5,6,7,8,9,10}; //9,10,11,12,13,14,15,16,0,1,2,3
 int switchPins[11] = {0,1,2,3,4,5,6,7,8,9,10};
 String pubStr[11] = {"shop/switch/light","shop/switch/dust","shop/switch/compressor","shop/switch/attic","","","","","","",""};
 String subStr[11] = {"shop/switch/light/set","shop/switch/dust/set","shop/switch/compressor/set","shop/switch/attic/set","","","","","","",""};
@@ -120,8 +121,9 @@ void callback(char* topic, byte* payload, unsigned int length)
 void setup()
 {
   mcp.begin_I2C(0x27);
-  mcpB.begin_I2C(0x20);
-  //ads1115.begin(0x49);  // Initialize ads1115 at address 0x49
+#ifndef TESTMODE
+  ads1115.begin(0x49);  // Initialize ads1115 at address 0x49
+#endif
   client.setServer(server, 1883);
   client.setCallback(callback);
   if (WiFi.status() == WL_NO_SHIELD) {
@@ -169,7 +171,7 @@ void loop()
       client.loop();
     }
 
-  if (millis() - lastTimer >= 2000)
+  if (millis() - lastTimer >= 1000)
   {
     /** \brief setup current values
       *
@@ -222,11 +224,13 @@ void loop()
     // 20k/1k vd
     // ((Vin * Rlow) / (Rhi + Rlow)) = Vout
     //
-
-    //float operatingVoltage = ads1115.readADC_SingleEnded(0); // analog A0 tied to 3.3v voltage reference. could use a better reference than the 3.3v
+#ifndef TESTMODE
+    float operatingVoltage = ads1115.readADC_SingleEnded(0); // analog A0 tied to 3.3v voltage reference. could use a better reference than the 3.3v
+    float rawVoltage = ads1115.readADC_SingleEnded(1); // A1 tied to voltage sense through the 20K/1K voltage divider. 100Vdc max input!
+#else
     float operatingVoltage = analogRead(0); // analog A0 tied to 3.3v voltage reference. could use a better reference than the 3.3v
-    //float rawVoltage = ads1115.readADC_SingleEnded(1); // A1 tied to voltage sense through the 20K/1K voltage divider. 100Vdc max input!
     float rawVoltage = analogRead(1); // A1 tied to voltage sense through the 20K/1K voltage divider. 100Vdc max input!
+#endif
     operatingVoltage = 2.048 / operatingVoltage; // get multiplyer, if better reference, change 3.30 to actual reference volts.
     rawVoltage = operatingVoltage * rawVoltage; // calc raw voltage from 3.3v reference.
     float equipCalcVolts = ((rawVoltage * 1000) / (20000 + 1000));
@@ -236,10 +240,13 @@ void loop()
     client.publish("equip/volts",tmpV);
     
     // handle load current sense with a Tamura L01Z200S05
-    //float BrawVoltage = ads1115.readADC_SingleEnded(2); // Tied to Load current sensor output.
+#ifndef TESTMODE
+    float BrawVoltage = ads1115.readADC_SingleEnded(2); // Tied to Load current sensor output.
+#else
     float BrawVoltage = analogRead(2); // Tied to Load current sensor output.
+#endif
     BrawVoltage = operatingVoltage * BrawVoltage; // calc raw voltage from 3.3v reference.
-    float ampsA = map(BrawVoltage,0.00,3.30,-200.00,200.00);
+    float ampsA = map(BrawVoltage,0.00,5.00,-200.00,200.00);
     char tmpAmps[32];
     sprintf(tmpAmps, "%6.2f", ampsA);
     client.publish("equip/loadamps",tmpAmps);
@@ -247,10 +254,13 @@ void loop()
     sprintf(tmpWatts, "%6.2f", (equipCalcVolts * ampsA));
     client.publish("equip/loadwatts",tmpWatts);
 
-    //float CrawVoltage = ads1115.readADC_SingleEnded(3); // Tied to Battery current sensor output.
+#ifndef TESTMODE
+    float CrawVoltage = ads1115.readADC_SingleEnded(3); // Tied to Battery current sensor output.
+#else
     float CrawVoltage = analogRead(3); // Tied to Battery current sensor output.
+#endif
     CrawVoltage = operatingVoltage * CrawVoltage; // calc raw voltage from 3.3v reference.
-    float ampsB = map(CrawVoltage,0.00,3.30,-200.00,200.00);
+    float ampsB = map(CrawVoltage,0.00,5.00,-200.00,200.00);
     char tmpAmpsB[32];
     sprintf(tmpAmpsB, "%6.2f", ampsB);
     client.publish("equip/battamps",tmpAmpsB);
