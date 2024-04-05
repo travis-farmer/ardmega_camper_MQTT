@@ -12,11 +12,11 @@ int status = WL_IDLE_STATUS;
 #include <Adafruit_MCP23X17.h>
 #include <Adafruit_ADS1X15.h>
 
-#define RELAY_HEAT 11 //4
-#define RELAY_FAN 12 //5
-#define RELAY_HVAC_HEAT 13 //6
-#define RELAY_HVAC_FAN 14 //7
-#define RELAY_HVAC_COOL 15 //8
+#define RELAY_HEAT 27 //4
+#define RELAY_FAN 28 //5
+#define RELAY_HVAC_HEAT 29 //6
+#define RELAY_HVAC_FAN 30 //7
+#define RELAY_HVAC_COOL 31 //8
 
 #define RELAY_ON HIGH
 #define RELAY_OFF LOW
@@ -24,7 +24,8 @@ int status = WL_IDLE_STATUS;
 DHTNEW mySensor(2);
 DHTNEW roomsensor(3);
 
-Adafruit_MCP23X17 mcp;
+Adafruit_MCP23X17 mcpA;
+Adafruit_MCP23X17 mcpB;
 
 Adafruit_ADS1115 ads1115;	// Construct an ads1115 
 //ads1115.setGain(GAIN_TWOTHIRDS);  // 2/3x gain +/- 6.144V  1 bit = 3mV (default)
@@ -64,16 +65,16 @@ bool stateFan = false;
 bool stateCool = false;
 
 
-
-bool state[11] = {false,false,false,false,false,false,false,false,false,false,false};
-bool stateAct[11] = {false,false,false,false,false,false,false,false,false,false,false};
-String setVal[11] = {"OFF","OFF","OFF","OFF","OFF","OFF","OFF","OFF","OFF","OFF","OFF"};
-int relayPins[11] = {0,1,2,3,4,5,6,7,8,9,10}; //9,10,11,12,13,14,15,16,0,1,2,3
-int switchPins[11] = {0,1,2,3,4,5,6,7,8,9,10};
-String pubStr[11] = {"shop/switch/light","shop/switch/dust","shop/switch/compressor","shop/switch/attic","","","","","","",""};
-String subStr[11] = {"shop/switch/light/set","shop/switch/dust/set","shop/switch/compressor/set","shop/switch/attic/set","","","","","","",""};
+bool state[27];
+bool stateAct[27];
+String setVal[27];
+int relayPins[27] = {0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26};
+String pubStr[27] = {"shop/switch/light","shop/switch/dust","shop/switch/compressor","shop/switch/attic","","","","","","","","","","","","","","","","","","","","","","",""};
+String subStr[27] = {"shop/switch/light/set","shop/switch/dust/set","shop/switch/compressor/set","shop/switch/attic/set","","","","","","","","","","","","","","","","","","","","","","",""};
 
 unsigned long coolTimer = 0UL;
+
+
 
 boolean reconnect()
 {
@@ -86,7 +87,7 @@ boolean reconnect()
     client.subscribe("shop/hvac/temperature/set");
 
     char tmpChar[40];
-    for (int i=0; i<=10; i++) {
+    for (int i=0; i<=26; i++) {
       if (subStr[i] != "") {
         subStr[i].toCharArray(tmpChar, 40);
         client.subscribe(tmpChar);
@@ -112,15 +113,22 @@ void callback(char* topic, byte* payload, unsigned int length)
   else if (tmpTopic == "equip/hvac/temperature/lowset") setLowTemp = atoi(tmpStr);
   else if (tmpTopic == "equip/hvac/temperature/highset") setHighTemp = atoi(tmpStr);
   else {
-    for (int i=0; i<=10; i++) {
+    for (int i=0; i<=26; i++) {
       if (tmpTopic == subStr[i] && subStr[i] != "") setVal[i] = tmpStr;
     }
   }
 }
 
+void remapDigitalWrite(uint8_t pin, uint8_t Value) {
+  if (pin <= 15) mcpA.digitalWrite(pin,Value);
+  else mcpB.digitalWrite(pin-16,Value);
+}
+
 void setup()
 {
-  mcp.begin_I2C(0x27);
+  mcpB.begin_I2C(0x27);
+  mcpA.begin_I2C(0x20);
+  
 #ifndef TESTMODE
   ads1115.begin(0x49);  // Initialize ads1115 at address 0x49
 #endif
@@ -137,14 +145,22 @@ void setup()
   delay(1500);
   lastReconnectAttempt = 0;
 
-  for (int i = 0; i <= 15; i++)
-  {
-    mcp.pinMode(i, OUTPUT);
-    mcp.digitalWrite(i,RELAY_OFF);
+  for (int i = 0; i <= 26; i++) {
+    state[i] = false;
+    stateAct[i] = false;
+    setVal[i] = "OFF";
   }
-  for (int i = 0; i <= 10; i++)
+
+  for (int i = 0; i <= 31; i++)
   {
-    mcpB.pinMode(switchPins[i], INPUT);
+    if (i <= 15) {
+      mcpA.pinMode(i, OUTPUT);
+      mcpA.digitalWrite(i,RELAY_OFF);
+    } else {
+      mcpB.pinMode(i-16, OUTPUT);
+      mcpB.digitalWrite(i-16,RELAY_OFF);
+    }
+    
   }
   
 }
@@ -171,7 +187,7 @@ void loop()
       client.loop();
     }
 
-  if (millis() - lastTimer >= 1000)
+  if (millis() - lastTimer >= 500)
   {
     /** \brief setup current values
       *
@@ -190,7 +206,7 @@ void loop()
       *
       *
       */
-    for (int i=0; i<=10; i++) {
+    for (int i=0; i<=26; i++) {
       if (pubStr[i] != "") {
         if (setVal[i] == "ON")
         {
@@ -203,13 +219,13 @@ void loop()
         
         if (state[i] == true)
         {
-          mcp.digitalWrite(relayPins[i],RELAY_ON);
+          remapDigitalWrite(relayPins[i],RELAY_ON);
         }
         else
         {
-          mcp.digitalWrite(relayPins[i],RELAY_OFF);
+          remapDigitalWrite(relayPins[i],RELAY_OFF);
         }
-        stateAct[i] = mcp.digitalRead(switchPins[i]);
+        stateAct[i] = state[i];
       }
     }
     char tmpChar[40];
@@ -322,20 +338,20 @@ void loop()
     }
     if (stateEquipHeating == true)
     {
-      mcp.digitalWrite(RELAY_HEAT, RELAY_ON);
+      remapDigitalWrite(RELAY_HEAT, RELAY_ON);
     }
     else
     {
-      mcp.digitalWrite(RELAY_HEAT, RELAY_OFF);
+      remapDigitalWrite(RELAY_HEAT, RELAY_OFF);
     }
     if (stateEquipCooling == true && stateEquipCool == false)
     {
-      mcp.digitalWrite(RELAY_FAN, RELAY_ON);
+      remapDigitalWrite(RELAY_FAN, RELAY_ON);
       stateEquipCool = true;
     }
     else if(stateEquipCooling == false)
     {
-      mcp.digitalWrite(RELAY_FAN, RELAY_OFF);
+      remapDigitalWrite(RELAY_FAN, RELAY_OFF);
       stateEquipCool = false;
     }
 
@@ -419,27 +435,27 @@ void loop()
   }
   if (stateHeating == true)
   {
-    mcp.digitalWrite(RELAY_HVAC_HEAT, RELAY_ON);
+    remapDigitalWrite(RELAY_HVAC_HEAT, RELAY_ON);
   }
   else
   {
-    mcp.digitalWrite(RELAY_HVAC_HEAT, RELAY_OFF);
+    remapDigitalWrite(RELAY_HVAC_HEAT, RELAY_OFF);
   }
   if (stateCooling == true && stateFan == false && stateCool == false)
   {
-    mcp.digitalWrite(RELAY_HVAC_FAN, RELAY_ON);
+    remapDigitalWrite(RELAY_HVAC_FAN, RELAY_ON);
     stateFan = true;
   }
   else if (stateCooling == true && millis() - coolTimer >= 30000 && stateFan == true && stateCool == false)
   {
     stateCool = true;
     coolTimer = millis();
-    mcp.digitalWrite(RELAY_HVAC_COOL, RELAY_OFF);
+    remapDigitalWrite(RELAY_HVAC_COOL, RELAY_OFF);
   }
   else if(stateCooling == false)
   {
-    mcp.digitalWrite(RELAY_HVAC_COOL, RELAY_OFF);
-    mcp.digitalWrite(RELAY_HVAC_FAN, RELAY_OFF);
+    remapDigitalWrite(RELAY_HVAC_COOL, RELAY_OFF);
+    remapDigitalWrite(RELAY_HVAC_FAN, RELAY_OFF);
     stateFan = false;
     stateCool = false;
   }
